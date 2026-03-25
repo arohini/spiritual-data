@@ -4,8 +4,11 @@ from pydantic import BaseModel
 import os
 from PyPDF2 import PdfReader
 from enum import Enum
+from datetime import datetime
+from storage_connection import MongodbOperations
 
 app = FastAPI()
+mdo = MongodbOperations("ssb_library")
 
 chapters = {
     1: "The Invocation",
@@ -98,6 +101,11 @@ class DivineList(str, Enum):
     lord_muruga = "lord-muruga"
     lord_krishna = "lord-krishna"
 
+class JournalEntry(BaseModel):
+    content: str
+    author: str
+    date: datetime | None = datetime.now()
+    
 
 @app.get("/ssb-sc/chapter-name/{chapter_id}")
 def get_chapter_name(chapter_id: int) -> dict:
@@ -167,10 +175,22 @@ def get_chapter_content(chapter_file: str, content_limit: int) -> dict:
 
 @app.post("/ssb-sc/experience-journal")
 def create_experience_journal(
-    entry: Annotated[str, "The content of the experience journal entry"],
+    entry: Annotated[JournalEntry, "The content of the experience journal entry"]
 ):
+    author = entry.author
+    content = entry.content
+    date = entry.date
+    entry_ref_id = f"{author}_{date.strftime('%Y%m%d%H%M%S')}"
+    data = entry.model_dump()
+    data["entry_ref_id"] = entry_ref_id
+    print(f"Received experience journal entry: {data}")
+    try:
+        mdo.insert_one("experience_journal", data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     # Here you would typically save the experience journal entry to a database
-    return {"message": "Experience journal entry created successfully!", "entry": entry}
+    return {"message": "Experience journal entry created successfully!", 
+            "entry_ref_id": entry_ref_id}
 
 
 @app.get("/ssb-sc/experience-journal/{entry_id}")
