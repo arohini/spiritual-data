@@ -7,9 +7,27 @@ from enum import Enum
 from datetime import datetime
 from storage_connection import MongodbOperations
 from bson.objectid import ObjectId
+from opentelemetry import trace
+from opentelemetry import metrics
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 mdo = MongodbOperations("ssb_library")
+
+
+# Acquire a tracer
+tracer = trace.get_tracer("spiritualdata.tracer")
+# Acquire a meter.
+meter = metrics.get_meter("spiritualdata.meter")
+
+# Now create a counter instrument to make measurements with
+hymn_counter = meter.create_counter(
+    "spiritualdata.hymns",
+    description="The number of spiritual hymns requested by users",
+)
 
 chapters = {
     1: "The Invocation",
@@ -113,9 +131,13 @@ class JournalEntry(BaseModel):
 def get_chapter_name(chapter_id: int) -> dict:
     # Here you would typically fetch the chapter name for the given chapter_id
     # To do: from a database
-    print(f"Received request for chapter ID: {chapter_id}")
-    chapter_name = chapters.get(chapter_id, "Chapter not found")
-    return {"chapter_id": chapter_id, "chapter_name": chapter_name}
+    logging.info(f"Received request for chapter ID: {chapter_id}")
+    with tracer.start_as_current_span("hymn_request") as hymn_span:
+        chapter_name = chapters.get(chapter_id, "Chapter not found")
+        result = {"chapter_id": chapter_id, "chapter_name": chapter_name}
+        hymn_span.set_attribute("hymn_request_value", chapter_name)
+        hymn_counter.add(1, result)
+        return result
 
 
 @app.get("/data-list/{supreme-list}")
