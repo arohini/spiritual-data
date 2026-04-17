@@ -9,12 +9,49 @@ from storage_connection import MongodbOperations
 from bson.objectid import ObjectId
 from opentelemetry import trace
 from opentelemetry import metrics
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 import logging
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# 1. Setup Resources (Metadata about your app)
+resource = Resource(attributes={
+    SERVICE_NAME: "spiritual-data-hymn-service"
+})
+
+# Get OTLP endpoint from environment variables (defaulting to localhost for Jaeger)
+otlp_endpoint = os.getenv("OTLP_ENDPOINT", "http://localhost:4317")
+
+# Configure the tracer provider and resources
+trace.set_tracer_provider(
+    TracerProvider(
+        resource=Resource.create({"service.name": "spiritual-hymn-dashboard"})
+    )
+)
+# Configure the OTLP exporter
+otlp_exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
+
+# Append the exporter to the tracer provider
+trace.get_tracer_provider().add_span_processor(
+    BatchSpanProcessor(otlp_exporter)
+)
+
+# Example span usage
+tracer = trace.get_tracer(__name__)
+
+
 app = FastAPI()
+
+# 3. Instrument FastAPI
+# This automatically tracks HTTP request counts, duration, and errors
+FastAPIInstrumentor.instrument_app(app)
+
 mdo = MongodbOperations("ssb_library")
 
 
@@ -137,6 +174,7 @@ def get_chapter_name(chapter_id: int) -> dict:
         result = {"chapter_id": chapter_id, "chapter_name": chapter_name}
         hymn_span.set_attribute("hymn_request_value", chapter_name)
         hymn_counter.add(1, result)
+        logging.info(f"Returning chapter name: {chapter_name} for chapter ID: {chapter_id}")
         return result
 
 
@@ -314,3 +352,9 @@ def delete_experience_journal_entry(
         "message": "Experience journal entry deleted successfully!",
         "object_id": object_id,
     }
+    
+if __name__ == "__main__":
+    import uvicorn
+    # start_http_server(port=9464)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
+    
